@@ -1,0 +1,33 @@
+# Build directories
+build/
+build-windows/
+build-rpi/
+AppDir/
+
+# Compiled binaries and archives
+*.a
+*.so
+*.so.*
+*.dll
+*.exe
+*.o
+*.AppImage
+*.zip
+JF8Call-*
+
+# Qt auto-generated
+*.moc
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+implementation.md
+aqtinstall.log
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
