@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "audioinput.h"
+#include <vector>
+#include <atomic>
 #include <QDebug>
 #include <QDateTime>
 #include <cmath>
@@ -8,6 +10,11 @@
 
 static constexpr float k_pi  = 3.14159265358979323846f;
 static constexpr int   k_inputRate  = 48000;  // PortAudio capture rate
+
+// Dropped-input accounting. A capture stream that silently loses samples is
+// indistinguishable from a quiet band by every other measure, so count it.
+static std::atomic<unsigned long long> g_inputOverflows{0};
+static std::atomic<unsigned long long> g_inputUnderflows{0};
 
 // ── FIR filter construction ──────────────────────────────────────────────────
 // 49-tap Kaiser-windowed lowpass.
@@ -109,10 +116,12 @@ AudioInput::~AudioInput()
 int AudioInput::paCallback(const void *input, void * /*output*/,
                            unsigned long frameCount,
                            const PaStreamCallbackTimeInfo * /*ti*/,
-                           PaStreamCallbackFlags /*flags*/,
+                           PaStreamCallbackFlags flags,
                            void *userData)
 {
     auto *self = static_cast<AudioInput *>(userData);
+    if (flags & paInputOverflow)  ++g_inputOverflows;
+    if (flags & paInputUnderflow) ++g_inputUnderflows;
     const float *in = static_cast<const float *>(input);
     if (in)
         self->processInputBlock(in, frameCount);
@@ -178,10 +187,17 @@ void AudioInput::computeSpectrum()
 {
     if (!m_fftCfg) return;
 
-    // Apply Hann window into pre-allocated input buffer
+    // The window is a constant. Rebuilding it cost 2048 std::cos calls per
+    // frame on the realtime capture thread -- time not spent draining the
+    // driver, which is what overruns the buffer in the first place.
+    static const std::vector<float> hann = [] {
+        std::vector<float> w(k_fftSize);
+        for (int i = 0; i < k_fftSize; ++i)
+            w[i] = 0.5f * (1.0f - std::cos(2.0f * k_pi * i / (k_fftSize - 1)));
+        return w;
+    }();
     for (int i = 0; i < k_fftSize; ++i) {
-        float w = 0.5f * (1.0f - std::cos(2.0f * k_pi * i / (k_fftSize - 1)));
-        m_fftIn[i].r = m_fftBuf[i] * w;
+        m_fftIn[i].r = m_fftBuf[i] * hann[i];
         m_fftIn[i].i = 0.0f;
     }
 
@@ -236,7 +252,14 @@ bool AudioInput::start(const QString &deviceName)
                                        ? 1 : 2;
     params.channelCount              = m_inputChannels;
     params.sampleFormat              = paFloat32;
-    params.suggestedLatency          = Pa_GetDeviceInfo(deviceIndex)->defaultLowInputLatency;
+    // High, not low. defaultLowInputLatency requests the smallest buffer the
+    // device admits to; on USB audio any scheduling delay then overruns it,
+    // and the lost samples are silent -- the stream keeps running, the level
+    // looks correct, the spectrum looks plausible, and nothing decodes. A
+    // mode working on multi-second periods has no use for low latency and
+    // every use for not losing samples.
+    params.suggestedLatency          = devInfo ? devInfo->defaultHighInputLatency
+                                               : 0.2;
     params.hostApiSpecificStreamInfo = nullptr;
 
     PaError err = Pa_OpenStream(
@@ -244,7 +267,8 @@ bool AudioInput::start(const QString &deviceName)
         &params,
         nullptr,         // no output
         k_inputRate,     // 48 kHz
-        1024,            // frames per callback
+        paFramesPerBufferUnspecified,  // let PortAudio choose what the host
+                                       // can actually sustain
         paClipOff,
         &AudioInput::paCallback,
         this);
@@ -332,4 +356,14 @@ QStringList AudioInput::availableDevices()
             names.append(QString::fromUtf8(info->name));
     }
     return names;
+}
+
+unsigned long long AudioInput::inputOverflowCount()
+{
+    return g_inputOverflows.load();
+}
+
+unsigned long long AudioInput::inputUnderflowCount()
+{
+    return g_inputUnderflows.load();
 }

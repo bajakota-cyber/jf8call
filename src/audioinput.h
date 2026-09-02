@@ -31,6 +31,11 @@ public:
     void stop();
     bool isRunning() const { return m_running.load(); }
 
+    // Capture-stream drop counters. Non-zero means audio has been lost and
+    // decodes will suffer for reasons nothing else will show.
+    static unsigned long long inputOverflowCount();
+    static unsigned long long inputUnderflowCount();
+
     // Copy the most recent nSamples from the ring buffer at the decimated rate.
     // Returns actual count copied (may be less if buffer not yet full).
     int readLatest(std::vector<float> &out, int nSamples);
