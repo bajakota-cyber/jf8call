@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include <QJsonDocument>
 #include "mainwindow.h"
 #include "wsserver.h"
 #include "messagemodel.h"
