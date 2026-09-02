@@ -123,7 +123,9 @@ void AudioInput::processInputBlock(const float *stereoIn, unsigned long frames)
 {
     // Extract left channel, apply FIR + N:1 decimation → m_targetRate
     for (unsigned long i = 0; i < frames; ++i) {
-        float sample = stereoIn[i * 2];  // left channel of stereo
+        // Stride must match what was actually opened, not what a stereo
+        // device would have given us.
+        float sample = stereoIn[i * m_inputChannels];  // first channel
 
         // Shift FIR delay line
         m_firBuf[m_firBufPos] = sample;
@@ -221,7 +223,18 @@ bool AudioInput::start(const QString &deviceName)
 
     PaStreamParameters params{};
     params.device                    = deviceIndex;
-    params.channelCount              = 2;  // stereo (PCM2901 is stereo)
+    // Ask the device how many input channels it has rather than assuming
+    // two. A PCM2901 is stereo, but the C-Media codec used in a Digirig
+    // captures MONO, and requesting two channels on it fails PortAudio
+    // validation with
+    //     Expression 'parameters->channelCount <= maxChans' failed
+    // after which the stream never opens while isRunning() still reports
+    // true and every spectrum frame is silence -- which looks like a dead
+    // band rather than a dead stream.
+    const PaDeviceInfo *devInfo      = Pa_GetDeviceInfo(deviceIndex);
+    m_inputChannels                  = (devInfo && devInfo->maxInputChannels < 2)
+                                       ? 1 : 2;
+    params.channelCount              = m_inputChannels;
     params.sampleFormat              = paFloat32;
     params.suggestedLatency          = Pa_GetDeviceInfo(deviceIndex)->defaultLowInputLatency;
     params.hostApiSpecificStreamInfo = nullptr;

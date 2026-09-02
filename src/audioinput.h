@@ -51,6 +51,9 @@ signals:
     void audioChunkReady(QByteArray chunk);
 
 private:
+    // Channels actually opened on the capture device: 2 for a stereo codec,
+    // 1 for a mono one such as the C-Media chip used in a Digirig.
+    int m_inputChannels = 2;
     static int paCallback(const void *input, void *output,
                           unsigned long frameCount,
                           const PaStreamCallbackTimeInfo *timeInfo,
